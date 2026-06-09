@@ -8,21 +8,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-COPY pyproject.toml ./
+COPY pyproject.toml README.md ./
+RUN mkdir -p src/synth_data_creator && touch src/synth_data_creator/__init__.py
 RUN pip install --no-cache-dir .
 
 # Copy application code
 COPY src/ ./src/
+RUN pip install --no-cache-dir --no-deps .
+COPY main.py ./
 
-# Create non-root user
-RUN useradd --create-home appuser
-USER appuser
+# Create output directory
+RUN mkdir -p /output
 
-EXPOSE 8000
-
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
-
-CMD ["uvicorn", "synth_data_creator.api.app:app", \
-     "--host", "0.0.0.0", "--port", "8000", \
-     "--workers", "1"]
+CMD ["python", "-m", "synth_data_creator.main"]

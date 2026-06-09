@@ -7,9 +7,6 @@ def compute_gini(values: list[float]) -> float:
     
     sorted_values = sorted(values)
     n = len(sorted_values)
-    if n == 0:
-        return 0.0
-    
     sum_vals = sum(sorted_values)
     if sum_vals == 0:
         return 0.0

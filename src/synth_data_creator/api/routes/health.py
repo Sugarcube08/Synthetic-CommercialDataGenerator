@@ -1,6 +1,6 @@
 import time
 import structlog
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -14,7 +14,10 @@ router = APIRouter(tags=["health"])
 START_TIME = time.time()
 
 @router.get("/health", response_model=HealthResponse)
-async def check_health(engine: AsyncEngine = Depends(get_db_engine)) -> HealthResponse:
+async def check_health(
+    response: Response,
+    engine: AsyncEngine = Depends(get_db_engine),
+) -> HealthResponse:
     """Liveness and readiness probe for the service."""
     uptime = time.time() - START_TIME
     
@@ -36,6 +39,7 @@ async def check_health(engine: AsyncEngine = Depends(get_db_engine)) -> HealthRe
         db_error = f"Database connection failed: {str(e)}"
 
     if db_status == "disconnected":
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return HealthResponse(
             status="unhealthy",
             version="0.1.0",

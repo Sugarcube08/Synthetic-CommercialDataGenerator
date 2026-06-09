@@ -1,34 +1,14 @@
-version: "3.9"
-
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: synth_user
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-secretpass}
-      POSTGRES_DB: synth_data
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U synth_user -d synth_data"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  synth-api:
+  synth-generator:
     build: .
-    ports:
-      - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
-      SYNTH_DATABASE_URI: postgresql+asyncpg://synth_user:${DB_PASSWORD:-secretpass}@postgres:5432/synth_data
-      SYNTH_LOG_LEVEL: INFO
-      SYNTH_LOG_FORMAT: json
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
-
-volumes:
-  pgdata:
+      DATABASE_URL: ${SYNTH_DATABASE_URI}
+      CUSTOMER_COUNT: ${CUSTOMER_COUNT:-4000}
+      SALES_COUNT: ${SALES_COUNT:-150000}
+      PAYMENT_COUNT: ${PAYMENT_COUNT:-150000}
+      RG_COUNT: ${RG_COUNT:-35000}
+      BATCH_SIZE: ${BATCH_SIZE:-5000}
+      SYNTH_SEED: ${SYNTH_SEED:-42}
+    restart: "no"

@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     def validate_database_uri(cls, v: Any) -> str:
         if not isinstance(v, str):
             v = str(v)
+        if not v or v.strip() == "":
+            raise ValueError(
+                "SYNTH_DATABASE_URI environment variable is required. Example: "
+                "postgresql+asyncpg://user:password@host:5432/dbname"
+            )
         if not v.startswith("postgresql+asyncpg://"):
             raise ValueError("Database URI must use the 'postgresql+asyncpg://' scheme")
         return v

@@ -53,11 +53,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-COPY pyproject.toml ./
+COPY pyproject.toml README.md ./
+RUN mkdir -p src/synth_data_creator && touch src/synth_data_creator/__init__.py
 RUN pip install --no-cache-dir .
 
 # Copy application code
 COPY src/ ./src/
+RUN pip install --no-cache-dir --no-deps .
 
 # Create non-root user
 RUN useradd --create-home appuser

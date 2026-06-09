@@ -94,9 +94,7 @@ def generate_single_profile(
             if rng.random() < 0.3:
                 continue
                 
-        # Growing + Churn-Risk: Mutually exclusive
-        if lifecycle == LifecycleSegment.GROWING and lifecycle == LifecycleSegment.CHURN_RISK:
-            continue  # Naturally impossible since a variable can't be both, but keep logic
+
             
         # Undisciplined + Fast Clearer: Reduce probability by 40%
         if discipline == DisciplineSegment.UNDISCIPLINED and outstanding == OutstandingSegment.FAST_CLEARER:
