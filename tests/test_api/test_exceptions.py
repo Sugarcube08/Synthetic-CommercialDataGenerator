@@ -4,7 +4,7 @@ from datetime import date
 from dataclasses import replace
 from unittest.mock import patch, MagicMock
 from httpx import AsyncClient, ASGITransport
-from fastapi import FastAPI, HTTPException
+from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -22,7 +22,7 @@ from synth_data_creator.core.logging import configure_logging
 from synth_data_creator.db.engine import create_session_maker
 from synth_data_creator.db.bulk_ops import bulk_insert
 from synth_data_creator.db.schema_init import initialize_schema, verify_schema
-from synth_data_creator.generation.customers.engine import estimate_annual_revenue, generate_profiles
+from synth_data_creator.generation.customers.engine import estimate_annual_revenue
 from synth_data_creator.generation.customers.segments import LifecycleSegment
 from synth_data_creator.generation.sales.products import pick_product
 from synth_data_creator.generation.payments.scheduling import split_payment
@@ -363,7 +363,7 @@ def test_redistribute_revenue_weights_fallback() -> None:
 
 
 def test_main_entry_point_startup() -> None:
-    """Verify package main entry point starts server via uvicorn."""
-    with patch("uvicorn.run") as mock_run:
+    """Verify package main entry point runs async_main via asyncio.run."""
+    with patch("asyncio.run") as mock_run:
         main()
         mock_run.assert_called_once()

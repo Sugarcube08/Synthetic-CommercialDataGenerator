@@ -45,6 +45,7 @@ async def async_main() -> None:
             "batch_size": 5000,
             "database_url": "postgresql+asyncpg://synth_user:secretpass@localhost:5432/synth_data",
             "seed": 42,
+            "months": 120,
         }
 
         parser = argparse.ArgumentParser(description="Synthetic Commercial Data Generator (Batch)")
@@ -54,6 +55,7 @@ async def async_main() -> None:
         parser.add_argument("-r", "--rgs", type=int, help="Target return (RG) records to generate")
         parser.add_argument("-b", "--batch-size", type=int, help="Batch size for database insert")
         parser.add_argument("-d", "--database-url", type=str, help="PostgreSQL connection URI")
+        parser.add_argument("-m", "--months", type=int, help="Months of history to generate")
         parser.add_argument("--seed", type=int, help="Random seed for generation")
         parser.add_argument("--config", type=str, help="Path to config file (YAML)")
 
@@ -96,6 +98,7 @@ async def async_main() -> None:
             "database_url", "DATABASE_URL", "database_url", default_config["database_url"]
         )
         seed = get_val("seed", "SYNTH_SEED", "seed", default_config["seed"])
+        target_months = get_val("months", "DATE_RANGE_MONTHS", "months", default_config["months"])
 
         if seed is not None:
             try:
@@ -113,7 +116,7 @@ async def async_main() -> None:
         engine = create_db_engine(db_url)
         await initialize_schema(engine, drop_existing=True)
 
-        start_date = date.today() - timedelta(days=24 * 30)  # Default 24 months
+        start_date = date.today() - timedelta(days=target_months * 30)
         end_date = date.today()
 
         # 3. Generate Customers

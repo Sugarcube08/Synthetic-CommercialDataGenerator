@@ -4,12 +4,18 @@ import numpy as np
 from synth_data_creator.generation.customers.profiles import CustomerProfile
 from synth_data_creator.generation.customers.segments import PaymentSegment
 
+from synth_data_creator.generation.events import get_event_modifiers
+
 def calculate_payment_date(
     invoice_date: date,
     profile: CustomerProfile,
     rng: np.random.Generator,
 ) -> date:
     """Calculate when the customer will make a payment."""
+    # Get event modifiers
+    mods = get_event_modifiers(invoice_date, profile.business_type)
+    delay_mult = mods["delay_mult"]
+
     # Sample delay from profile distribution
     raw_delay = rng.normal(
         profile.payment_delay_mean,
@@ -18,19 +24,19 @@ def calculate_payment_date(
 
     # Add discipline noise
     noise = rng.normal(0, profile.discipline_cv * 10)
-    delay_days = int(raw_delay + noise)
+    delay_days = int((raw_delay + noise) * delay_mult)
 
-    # Apply limits/clamping based on payment segment
+    # Apply limits/clamping based on payment segment, scaled by delay_mult
     if profile.payment_segment == PaymentSegment.HYPER:
-        delay_days = max(-10, min(delay_days, 5))
+        delay_days = max(int(-10 * delay_mult), min(delay_days, int(5 * delay_mult)))
     elif profile.payment_segment == PaymentSegment.FAST:
-        delay_days = max(1, min(delay_days, 15))
+        delay_days = max(int(1 * delay_mult), min(delay_days, int(15 * delay_mult)))
     elif profile.payment_segment == PaymentSegment.MODERATE:
-        delay_days = max(15, min(delay_days, 40))
+        delay_days = max(int(15 * delay_mult), min(delay_days, int(40 * delay_mult)))
     elif profile.payment_segment == PaymentSegment.DELAYED:
-        delay_days = max(30, min(delay_days, 90))
+        delay_days = max(int(30 * delay_mult), min(delay_days, int(90 * delay_mult)))
     else:  # CHRONIC_LATE
-        delay_days = max(45, min(delay_days, 365))
+        delay_days = max(int(45 * delay_mult), min(delay_days, int(365 * delay_mult)))
 
     return invoice_date + timedelta(days=delay_days)
 

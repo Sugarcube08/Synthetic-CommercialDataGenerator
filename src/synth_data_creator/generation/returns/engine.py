@@ -10,6 +10,8 @@ from synth_data_creator.generation.returns.reasons import (
     ReturnReason,
 )
 
+from synth_data_creator.generation.events import get_event_modifiers
+
 class GlobalReturnTracker:
     def __init__(self) -> None:
         self.return_sequences: dict[int, int] = {}
@@ -111,8 +113,11 @@ def generate_returns_for_customer(
         category = sale["product_category"]
         cat_mult = CATEGORY_MULTIPLIERS.get(category, 1.0)
         
+        # Get active events modifiers on invoice date
+        mods = get_event_modifiers(sale["invoice_date"], profile.business_type)
+        
         # Effective return probability
-        effective_rate = profile.return_probability * cat_mult * discipline_mult
+        effective_rate = profile.return_probability * cat_mult * discipline_mult * mods["return_mult"]
 
         if rng.random() < effective_rate:
             # Pick reason based on weights

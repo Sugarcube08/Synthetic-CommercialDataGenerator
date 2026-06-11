@@ -9,6 +9,8 @@ from synth_data_creator.generation.customers.segments import FrequencySegment, L
 from synth_data_creator.generation.sales.pricing import calculate_discount_pct, calculate_gst
 from synth_data_creator.generation.sales.products import pick_product
 
+from synth_data_creator.generation.events import get_event_modifiers
+
 class GlobalInvoiceTracker:
     def __init__(self) -> None:
         self.year_sequences: dict[int, int] = {}
@@ -81,10 +83,14 @@ def generate_order_dates(
     current = profile.registration_date
 
     while current < end_date:
+        # Get event modifiers for frequency
+        mods = get_event_modifiers(current, profile.business_type)
+        freq_m = mods["frequency_mult"]
+
         # Sample inter-order interval from profile distribution
         # Clamp std to avoid division by zero or negative std
-        std = max(1.0, profile.order_frequency_std)
-        interval = max(1, int(rng.normal(profile.order_frequency_days, std)))
+        std = max(1.0, profile.order_frequency_std * freq_m)
+        interval = max(1, int(rng.normal(profile.order_frequency_days * freq_m, std)))
         current += timedelta(days=interval)
 
         if current < end_date:
@@ -116,13 +122,17 @@ def generate_sales_for_customer(
         # Number of line items per order
         num_items = max(1, int(rng.poisson(profile.items_per_order)))
 
+        # Get event modifiers active on order date
+        mods = get_event_modifiers(order_date, profile.business_type)
+
         for _ in range(num_items):
             category, product_info = pick_product(profile.business_type, rng)
             base_price = product_info["base_price"]
-            # Price variation +/- 5%
-            unit_price = round(float(base_price * rng.uniform(0.95, 1.05)), 2)
+            
+            # Price variation +/- 5%, modified by event pricing multiplier
+            unit_price = round(float(base_price * rng.uniform(0.95, 1.05) * mods["price_mult"]), 2)
 
-            # Determine quantity based on volume segment
+            # Determine quantity based on volume segment, modified by event quantity multiplier
             if profile.volume_segment == VolumeSegment.WHALE:
                 quantity = int(rng.integers(100, 5001))
             elif profile.volume_segment == VolumeSegment.MEDIUM:
@@ -130,14 +140,19 @@ def generate_sales_for_customer(
             else:  # SMALL
                 quantity = int(rng.integers(1, 51))
 
+            quantity = max(1, int(quantity * mods["quantity_mult"]))
+
             gross_amount = round(quantity * unit_price, 2)
-            discount_pct = round(calculate_discount_pct(
+            
+            # Calculate discount, modified by event discount adder
+            base_discount_pct = calculate_discount_pct(
                 profile.volume_segment,
                 quantity,
                 profile.registration_date,
                 order_date,
                 rng,
-            ), 2)
+            )
+            discount_pct = round(min(100.0, max(0.0, base_discount_pct + mods["discount_add"])), 2)
             discount_amount = round(gross_amount * (discount_pct / 100.0), 2)
             taxable_amount = round(gross_amount - discount_amount, 2)
 

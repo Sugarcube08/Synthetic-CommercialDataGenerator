@@ -17,8 +17,18 @@ class Settings(BaseSettings):
 
     # ── Generation Defaults ───────────────────────────────
     default_num_customers: int = Field(default=500, ge=10, le=100_000)
-    default_date_range_months: int = Field(default=24, ge=1, le=120)
+    default_date_range_months: int = Field(default=120, ge=1, le=240)
     default_seed: int | None = Field(default=None, description="RNG seed for reproducibility")
+
+    @field_validator("default_seed", mode="before")
+    @classmethod
+    def validate_default_seed(cls, v: Any) -> int | None:
+        if v == "" or v is None:
+            return None
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return None
 
     # ── Batch Processing ──────────────────────────────────
     batch_size: int = Field(default=5000, ge=100, le=50_000)

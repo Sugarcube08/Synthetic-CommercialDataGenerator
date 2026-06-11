@@ -11,4 +11,5 @@ services:
       RG_COUNT: ${RG_COUNT:-35000}
       BATCH_SIZE: ${BATCH_SIZE:-5000}
       SYNTH_SEED: ${SYNTH_SEED:-42}
+      DATE_RANGE_MONTHS: ${DATE_RANGE_MONTHS:-120}
     restart: "no"

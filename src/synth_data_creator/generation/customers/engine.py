@@ -52,61 +52,53 @@ def generate_single_profile(
 ) -> CustomerProfile:
     """Generate a single customer profile, enforcing correlation constraints via rejection sampling."""
     
-    # Rejection sampling loop for segment assignment
-    max_attempts = 100
-    for _ in range(max_attempts):
-        # 1. Base weights for segments
-        volume = VolumeSegment(rng.choice(
-            [VolumeSegment.WHALE.value, VolumeSegment.MEDIUM.value, VolumeSegment.SMALL.value],
-            p=[0.05, 0.30, 0.65],
-        ))
-        frequency = FrequencySegment(rng.choice(
-            [FrequencySegment.FREQUENT.value, FrequencySegment.OCCASIONAL.value, FrequencySegment.SEASONAL.value, FrequencySegment.RARE.value],
-            p=[0.25, 0.35, 0.25, 0.15],
-        ))
-        payment = PaymentSegment(rng.choice(
-            [PaymentSegment.HYPER.value, PaymentSegment.FAST.value, PaymentSegment.MODERATE.value, PaymentSegment.DELAYED.value, PaymentSegment.CHRONIC_LATE.value],
-            p=[0.10, 0.25, 0.30, 0.25, 0.10],
-        ))
-        outstanding = OutstandingSegment(rng.choice(
-            [OutstandingSegment.FAST_CLEARER.value, OutstandingSegment.MAINTAINER.value, OutstandingSegment.HIGH_UTILIZER.value, OutstandingSegment.BALANCED.value],
-            p=[0.25, 0.30, 0.20, 0.25],
-        ))
-        discipline = DisciplineSegment(rng.choice(
-            [DisciplineSegment.DISCIPLINED.value, DisciplineSegment.MODERATE.value, DisciplineSegment.UNDISCIPLINED.value],
-            p=[0.30, 0.45, 0.25],
-        ))
-        lifecycle = LifecycleSegment(rng.choice(
-            [LifecycleSegment.GROWING.value, LifecycleSegment.STABLE.value, LifecycleSegment.DECLINING.value, LifecycleSegment.CHURN_RISK.value],
-            p=[0.20, 0.35, 0.25, 0.20],
-        ))
+    # 1. Base weights for segments based on business type
+    business_type = rng.choice(
+        ["retailer", "distributor", "manufacturer", "wholesaler"],
+        p=[0.40, 0.25, 0.20, 0.15]
+    )
 
+    if business_type == "manufacturer":
+        vol_p = [0.50, 0.40, 0.10]
+        freq_p = [0.05, 0.40, 0.15, 0.40]
+        pay_p = [0.05, 0.10, 0.40, 0.30, 0.15]
+    elif business_type == "wholesaler":
+        vol_p = [0.20, 0.60, 0.20]
+        freq_p = [0.20, 0.50, 0.20, 0.10]
+        pay_p = [0.05, 0.30, 0.40, 0.20, 0.05]
+    elif business_type == "distributor":
+        vol_p = [0.10, 0.50, 0.40]
+        freq_p = [0.50, 0.30, 0.15, 0.05]
+        pay_p = [0.15, 0.40, 0.35, 0.08, 0.02]
+    else:  # retailer
+        vol_p = [0.01, 0.19, 0.80]
+        freq_p = [0.60, 0.30, 0.05, 0.05]
+        pay_p = [0.15, 0.35, 0.35, 0.12, 0.03]
 
-
-        # 2. Check correlation constraints
-        # Whale + Chronic Late: Reduce probability by 50%
-        if volume == VolumeSegment.WHALE and payment == PaymentSegment.CHRONIC_LATE:
-            if rng.random() < 0.5:
-                continue
-                
-        # Small + Hyper Payer: Reduce probability by 30%
-        if volume == VolumeSegment.SMALL and payment == PaymentSegment.HYPER:
-            if rng.random() < 0.3:
-                continue
-                
-
-            
-        # Undisciplined + Fast Clearer: Reduce probability by 40%
-        if discipline == DisciplineSegment.UNDISCIPLINED and outstanding == OutstandingSegment.FAST_CLEARER:
-            if rng.random() < 0.4:
-                continue
-                
-        # Whale + Rare: Reduce probability by 70%
-        if volume == VolumeSegment.WHALE and frequency == FrequencySegment.RARE:
-            if rng.random() < 0.7:
-                continue
-                
-        break
+    volume = VolumeSegment(rng.choice(
+        [VolumeSegment.WHALE.value, VolumeSegment.MEDIUM.value, VolumeSegment.SMALL.value],
+        p=vol_p,
+    ))
+    frequency = FrequencySegment(rng.choice(
+        [FrequencySegment.FREQUENT.value, FrequencySegment.OCCASIONAL.value, FrequencySegment.SEASONAL.value, FrequencySegment.RARE.value],
+        p=freq_p,
+    ))
+    payment = PaymentSegment(rng.choice(
+        [PaymentSegment.HYPER.value, PaymentSegment.FAST.value, PaymentSegment.MODERATE.value, PaymentSegment.DELAYED.value, PaymentSegment.CHRONIC_LATE.value],
+        p=pay_p,
+    ))
+    outstanding = OutstandingSegment(rng.choice(
+        [OutstandingSegment.FAST_CLEARER.value, OutstandingSegment.MAINTAINER.value, OutstandingSegment.HIGH_UTILIZER.value, OutstandingSegment.BALANCED.value],
+        p=[0.25, 0.30, 0.20, 0.25],
+    ))
+    discipline = DisciplineSegment(rng.choice(
+        [DisciplineSegment.DISCIPLINED.value, DisciplineSegment.MODERATE.value, DisciplineSegment.UNDISCIPLINED.value],
+        p=[0.30, 0.45, 0.25],
+    ))
+    lifecycle = LifecycleSegment(rng.choice(
+        [LifecycleSegment.GROWING.value, LifecycleSegment.STABLE.value, LifecycleSegment.DECLINING.value, LifecycleSegment.CHURN_RISK.value],
+        p=[0.20, 0.35, 0.25, 0.20],
+    ))
 
     # 3. Derive numeric parameters
     # Volume -> avg_order_value, credit_limit, payment_terms_days
@@ -212,10 +204,6 @@ def generate_single_profile(
     city = fake.city()
     state = fake.state()
     postal_code = fake.postcode()
-    business_type = rng.choice(
-        ["retailer", "distributor", "manufacturer", "wholesaler"],
-        p=[0.50, 0.25, 0.15, 0.10]
-    )
 
     registration_date = assign_registration_date(start_date, end_date, lifecycle, rng)
     customer_code = f"CUST-{customer_idx:05d}"
