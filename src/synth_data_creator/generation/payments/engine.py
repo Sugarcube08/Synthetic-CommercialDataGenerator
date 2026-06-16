@@ -37,24 +37,34 @@ def generate_payments_for_customer(
     # Sort sales chronologically by invoice_date
     sorted_sales = sorted(sales_records, key=lambda s: s["invoice_date"])
 
+    # Precompute cumulative invoiced amount strictly before each date
+    invoiced_by_date = {}
+    for s in sorted_sales:
+        d = s["invoice_date"]
+        invoiced_by_date[d] = invoiced_by_date.get(d, 0.0) + s["invoice_amount"]
+    
+    sorted_dates = sorted(invoiced_by_date.keys())
+    prefix_invoiced_before_date = {}
+    current_sum = 0.0
+    for d in sorted_dates:
+        prefix_invoiced_before_date[d] = round(current_sum, 2)
+        current_sum += invoiced_by_date[d]
+
     # Track scheduled payments to evaluate outstanding balance dynamically
     scheduled_payments = []
+    payments_by_sale = {}  # sale_id -> list of payment dicts
+    payments_by_date = {}  # payment_date -> float (sum of payment amounts)
 
     for sale in sorted_sales:
         invoice_amount = sale["invoice_amount"]
         due_date = sale["due_date"]
         invoice_date = sale["invoice_date"]
+        sale_id = sale.get("id")
         
         # 1. Calculate current outstanding balance as of invoice_date
         def get_outstanding_on(target_date: date) -> float:
-            total_invoiced = 0.0
-            total_paid = 0.0
-            for s in sorted_sales:
-                if s["invoice_date"] < target_date:
-                    total_invoiced += s["invoice_amount"]
-            for p_info in scheduled_payments:
-                if p_info["payment"]["payment_date"] <= target_date:
-                    total_paid += p_info["payment"]["payment_amount"]
+            total_invoiced = prefix_invoiced_before_date.get(target_date, 0.0)
+            total_paid = sum(amt for d, amt in payments_by_date.items() if d <= target_date)
             return round(total_invoiced - total_paid, 2)
 
         curr_outstanding = get_outstanding_on(invoice_date)
@@ -78,9 +88,16 @@ def generate_payments_for_customer(
                 if amount_to_clear <= 0:
                     break
                 p_dict = p_info["payment"]
+                
+                # Update payments_by_date tracking
+                old_date = p_dict["payment_date"]
+                amt = p_dict["payment_amount"]
+                payments_by_date[old_date] = round(payments_by_date.get(old_date, 0.0) - amt, 2)
+                payments_by_date[invoice_date] = round(payments_by_date.get(invoice_date, 0.0) + amt, 2)
+                
                 p_dict["payment_date"] = invoice_date
                 p_dict["remarks"] = p_dict.get("remarks", "") + " (Pulled forward to clear credit limit)"
-                amount_to_clear -= p_dict["payment_amount"]
+                amount_to_clear -= amt
                 
             # If we still have excess, apply forced payment to previous open invoices
             if amount_to_clear > 0.01:
@@ -92,9 +109,10 @@ def generate_payments_for_customer(
                         break  # Only previous ones
                     
                     prev_paid = 0.0
-                    for p_info in scheduled_payments:
-                        if p_info["sale"] == prev_sale and p_info["payment"]["payment_date"] <= invoice_date:
-                            prev_paid += p_info["payment"]["payment_amount"]
+                    prev_sale_id = prev_sale.get("id")
+                    for pay in payments_by_sale.get(prev_sale_id, []):
+                        if pay["payment_date"] <= invoice_date:
+                            prev_paid += pay["payment_amount"]
                             
                     prev_balance = round(prev_sale["invoice_amount"] - prev_paid, 2)
                     if prev_balance > 0.01:
@@ -106,7 +124,7 @@ def generate_payments_for_customer(
                             
                             pay_rec = {
                                 "customer_id": profile.id,
-                                "invoice_id": prev_sale["id"] if "id" in prev_sale else None,
+                                "invoice_id": prev_sale_id,
                                 "payment_number": p_num,
                                 "payment_date": invoice_date,
                                 "payment_amount": apply_amt,
@@ -120,6 +138,9 @@ def generate_payments_for_customer(
                                 "payment": pay_rec,
                                 "sale": prev_sale
                             })
+                            payments_by_sale.setdefault(prev_sale_id, []).append(pay_rec)
+                            payments_by_date[invoice_date] = round(payments_by_date.get(invoice_date, 0.0) + apply_amt, 2)
+                            
                             forced_pay_amt = round(forced_pay_amt - apply_amt, 2)
                             
                 # If there's still forced_pay_amt left, we apply it as an advance on the current sale
@@ -132,7 +153,7 @@ def generate_payments_for_customer(
                         
                         pay_rec = {
                             "customer_id": profile.id,
-                            "invoice_id": sale["id"] if "id" in sale else None,
+                            "invoice_id": sale_id,
                             "payment_number": p_num,
                             "payment_date": invoice_date,
                             "payment_amount": apply_amt,
@@ -146,6 +167,9 @@ def generate_payments_for_customer(
                             "payment": pay_rec,
                             "sale": sale
                         })
+                        payments_by_sale.setdefault(sale_id, []).append(pay_rec)
+                        payments_by_date[invoice_date] = round(payments_by_date.get(invoice_date, 0.0) + apply_amt, 2)
+                        
                         invoice_amount = round(invoice_amount - apply_amt, 2)
         
         # 3. Determine payment for the current invoice
@@ -191,7 +215,7 @@ def generate_payments_for_customer(
 
                     pay_rec = {
                         "customer_id": profile.id,
-                        "invoice_id": sale["id"] if "id" in sale else None,
+                        "invoice_id": sale_id,
                         "payment_number": p_num,
                         "payment_date": p_date,
                         "payment_amount": amt,
@@ -205,6 +229,8 @@ def generate_payments_for_customer(
                         "payment": pay_rec,
                         "sale": sale
                     })
+                    payments_by_sale.setdefault(sale_id, []).append(pay_rec)
+                    payments_by_date[p_date] = round(payments_by_date.get(p_date, 0.0) + amt, 2)
 
     # 4. Filter payment records to only include those on or before end_date,
     # and update the sales records details in place
