@@ -19,14 +19,14 @@ async def async_main() -> None:
     try:
         # 1. Load configuration with correct precedence: CLI Args > Env Vars > Defaults
         default_config = {
-            "customers": 4000,
-            "sales": 150000,
-            "payments": 150000,
-            "rgs": 35000,
+            "customers": 1000,
+            "sales": 50000,
+            "payments": 45000,
+            "rgs": 5000,
             "batch_size": 5000,
             "database_url": "postgresql+asyncpg://synth_user:secretpass@localhost:5432/synth_data",
             "seed": 42,
-            "months": 120,
+            "months": 24,
             "duplication_rate": 0.05,
             "export_dir": "exports",
         }

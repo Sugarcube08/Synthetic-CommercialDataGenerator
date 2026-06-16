@@ -548,12 +548,18 @@ async def simulate_ecosystem(
     # Relationships (Phase H)
     print("Step 3: Simulating Network Relationship Graph...", flush=True)
     relationships = []
+    
+    # Pre-group customers by city for O(N) lookup instead of O(N^2)
+    customers_by_city = {}
+    for node in customer_nodes:
+        customers_by_city.setdefault(node.territory["city"], []).append(node)
+
     for node in customer_nodes:
         # Geographic or cluster related linkages
         same_city_nodes = [
             n
-            for n in customer_nodes
-            if n.id != node.id and n.territory["city"] == node.territory["city"]
+            for n in customers_by_city.get(node.territory["city"], [])
+            if n.id != node.id
         ]
         if same_city_nodes and rng.random() < 0.15:
             related = rng.choice(same_city_nodes)
@@ -580,12 +586,15 @@ async def simulate_ecosystem(
     return_seq = 100000
     cn_seq = 100000
 
+    # Index customer nodes by ID for O(1) daily lookup
+    customer_by_id = {node.id: node for node in customer_nodes}
+
     # Open invoices tracking for payments: customer_id -> list of open invoices dicts
     open_invoices: Dict[uuid.UUID, List[Dict[str, Any]]] = {}
 
     # Scheduled actions collections (Phase B/C)
-    scheduled_payments = []
-    scheduled_returns = []
+    scheduled_payments = {}
+    scheduled_returns = {}
 
     print(f"Step 4: Running Chronological Loop from {start_date} to {end_date}...", flush=True)
 
@@ -622,9 +631,20 @@ async def simulate_ecosystem(
 
     # Daily simulation loop
     total_sim_days = (end_date - start_date).days
+    
+    # Sort customers by registration date to track active customers chronologically and avoid scanning all customers daily
+    customer_nodes_sorted = sorted(customer_nodes, key=lambda n: n.registration_date)
+    active_customers: List[CustomerSimNode] = []
+    cust_idx = 0
+
     for day_idx in range(total_sim_days + 1):
         sim_date = start_date + timedelta(days=day_idx)
         dt_sim = datetime.combine(sim_date, datetime.min.time())
+
+        # Add newly registered customers
+        while cust_idx < len(customer_nodes_sorted) and customer_nodes_sorted[cust_idx].registration_date <= sim_date:
+            active_customers.append(customer_nodes_sorted[cust_idx])
+            cust_idx += 1
 
         # Identify active events/shocks (Phase G)
         from synth_data_creator.generation.events import get_active_events
@@ -633,9 +653,9 @@ async def simulate_ecosystem(
         mods = get_event_modifiers(sim_date, "retailer")  # baseline
 
         # A. Process scheduled payments on sim_date
-        todays_payments = [p for p in scheduled_payments if p["payment_date"] == sim_date]
+        todays_payments = scheduled_payments.get(sim_date, [])
         for p in todays_payments:
-            node = next((n for n in customer_nodes if n.id == p["customer_id"]), None)
+            node = customer_by_id.get(p["customer_id"])
             if not node:
                 continue
 
@@ -718,9 +738,9 @@ async def simulate_ecosystem(
                 p["invoice_ref"]["payment_status"] = "partial"
 
         # B. Process scheduled returns on sim_date
-        todays_returns = [r for r in scheduled_returns if r["return_date"] == sim_date]
+        todays_returns = scheduled_returns.get(sim_date, [])
         for r in todays_returns:
-            node = next((n for n in customer_nodes if n.id == r["customer_id"]), None)
+            node = customer_by_id.get(r["customer_id"])
             if not node:
                 continue
 
@@ -793,9 +813,7 @@ async def simulate_ecosystem(
                 r["invoice_ref"]["payment_status"] = "partial"
 
         # C. Process core B2B updates, orders, and schedule futures
-        for node in customer_nodes:
-            if sim_date < node.registration_date:
-                continue
+        for node in active_customers:
 
             # Update Hidden states
             node.update_state_and_variables(sim_date, active_events)
@@ -893,7 +911,7 @@ async def simulate_ecosystem(
                     if cust_opens:
                         target_inv = cust_opens[0]
                         # Pull forward payment to today
-                        scheduled_payments.append(
+                        scheduled_payments.setdefault(sim_date, []).append(
                             {
                                 "customer_id": node.id,
                                 "invoice_id": target_inv["id"],
@@ -1062,7 +1080,7 @@ async def simulate_ecosystem(
                     is_full_payment = rng.random() < full_pay_prob
 
                     if is_full_payment:
-                        scheduled_payments.append(
+                        scheduled_payments.setdefault(payment_date, []).append(
                             {
                                 "customer_id": node.id,
                                 "invoice_id": sale_id,
@@ -1076,7 +1094,7 @@ async def simulate_ecosystem(
                         split_amt = float(round(sale_dict["invoice_amount"] / num_splits, 2))
                         for i in range(num_splits):
                             split_date = payment_date + timedelta(days=i * 10)
-                            scheduled_payments.append(
+                            scheduled_payments.setdefault(split_date, []).append(
                                 {
                                     "customer_id": node.id,
                                     "invoice_id": sale_id,
@@ -1110,7 +1128,7 @@ async def simulate_ecosystem(
                     ]
                     reason = rng.choice(reasons)
 
-                    scheduled_returns.append(
+                    scheduled_returns.setdefault(return_date, []).append(
                         {
                             "customer_id": node.id,
                             "sale_id": sale_id,
