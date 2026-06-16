@@ -1,5 +1,6 @@
 import asyncio
 import time
+import os
 from datetime import date, timedelta
 from typing import Any
 import numpy as np
@@ -9,10 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from synth_data_creator.db.bulk_ops import bulk_insert
 from synth_data_creator.db.schema_init import initialize_schema, verify_schema
-from synth_data_creator.generation.customers.engine import generate_profiles
-from synth_data_creator.generation.sales.engine import GlobalInvoiceTracker, generate_sales_for_customer, generate_order_dates
-from synth_data_creator.generation.payments.engine import GlobalPaymentTracker, generate_payments_for_customer
-from synth_data_creator.generation.returns.engine import GlobalReturnTracker, generate_returns_for_customer
+from synth_data_creator.generation.simulation import simulate_ecosystem
+from synth_data_creator.generation.exporters import export_all_modes
 from synth_data_creator.stats.kpi_calibration import calibrate_kpis
 from synth_data_creator.stats.pareto import compute_gini
 
@@ -20,38 +19,6 @@ logger = structlog.get_logger()
 
 # In-memory status store for tracking job states
 jobs_status: dict[str, dict[str, Any]] = {}
-
-
-async def db_writer_worker(queue: asyncio.Queue, engine: AsyncEngine, job_id: str) -> None:
-    """Async background worker that consumes batches from the queue and inserts them into PostgreSQL."""
-    while True:
-        batch = await queue.get()
-        if batch is None:
-            queue.task_done()
-            break
-
-        table_name, records = batch
-        try:
-            if records:
-                await bulk_insert(engine, table_name, records)
-                # Update status count
-                status = jobs_status.get(job_id)
-                if status:
-                    status_key = table_name.replace("raw_", "")
-                    status["records"][status_key]["written"] += len(records)
-        except Exception as e:
-            logger.error("db_writer_worker_error", table=table_name, error=str(e))
-            # Put error into job status
-            status = jobs_status.get(job_id)
-            if status:
-                status["status"] = "failed"
-                status["error"] = {
-                    "code": "GENERATION_FAILED",
-                    "message": f"Database bulk insert failed on table '{table_name}'",
-                    "details": str(e)
-                }
-        finally:
-            queue.task_done()
 
 
 async def compute_db_kpis(engine: AsyncEngine, start_date: date, end_date: date) -> dict[str, Any]:
@@ -194,167 +161,56 @@ async def run_generation_job(
         status["phase_progress"] = 0.10
         status["total_progress"] = 0.02
         
-        await initialize_schema(engine, drop_existing=options.get("drop_existing", False))
+        await initialize_schema(engine, drop_existing=options.get("drop_existing", True))
         await verify_schema(engine)
 
-        # Phase 2: Generate & Write Customers
-        logger.info("job_phase_customers", job_id=job_id)
-        status["phase"] = "customers"
-        status["phase_progress"] = 0.0
-        status["total_progress"] = 0.05
+        # Phase 2: Run Behavioral Simulation
+        logger.info("job_phase_simulation", job_id=job_id)
+        status["phase"] = "generation"
+        status["phase_progress"] = 0.50
+        status["total_progress"] = 0.40
 
-        # CPU bound customer profile generation run in executor
-        profiles = await asyncio.to_thread(
-            generate_profiles, num_customers, start_date, end_date, seed
+        run_seed = seed if seed is not None else 42
+        
+        # Chronological day-by-day B2B simulation
+        sim_results = await simulate_ecosystem(
+            engine=engine,
+            num_customers=num_customers,
+            start_date=start_date,
+            end_date=end_date,
+            seed=run_seed,
+            target_sales=options.get("sales_count", 150000),
+            target_payments=options.get("payment_count", 150000),
+            target_rgs=options.get("rg_count", 35000),
+            batch_size=batch_size
         )
         
-        status["records"]["customers"]["generated"] = len(profiles)
+        # Populate counts
+        status["records"]["customers"]["generated"] = len(sim_results["customers"])
+        status["records"]["customers"]["written"] = len(sim_results["customers"])
+        status["records"]["sales"] = {"generated": len(sim_results["raw_sales"]), "written": len(sim_results["raw_sales"])}
+        status["records"]["payments"] = {"generated": len(sim_results["raw_payments"]), "written": len(sim_results["raw_payments"])}
+        status["records"]["returns"] = {"generated": len(sim_results["raw_returns"]), "written": len(sim_results["raw_returns"])}
+
+        # Phase 3: Export Datasets
+        logger.info("job_phase_exporters", job_id=job_id)
+        status["phase"] = "exporting"
+        status["phase_progress"] = 0.80
+        status["total_progress"] = 0.80
         
-        # Format profiles for database insert
-        customer_records = []
-        for p in profiles:
-            customer_records.append({
-                "id": p.id,
-                "customer_code": p.customer_code,
-                "business_name": p.business_name,
-                "contact_name": p.contact_name,
-                "email": p.email,
-                "phone": p.phone,
-                "address_line1": p.address_line1,
-                "address_line2": "",
-                "city": p.city,
-                "state": p.state,
-                "postal_code": p.postal_code,
-                "country": p.country,
-                "business_type": p.business_type,
-                "registration_date": p.registration_date,
-                "credit_limit": p.credit_limit,
-                "payment_terms_days": p.payment_terms_days,
-                "is_active": True,
-                "behavioral_profile": {
-                    "volume_segment": p.volume_segment.value,
-                    "frequency_segment": p.frequency_segment.value,
-                    "payment_segment": p.payment_segment.value,
-                    "outstanding_segment": p.outstanding_segment.value,
-                    "discipline_segment": p.discipline_segment.value,
-                    "lifecycle_segment": p.lifecycle_segment.value,
-                    "params": {
-                        "avg_order_value": p.avg_order_value,
-                        "order_frequency_days": p.order_frequency_days,
-                        "payment_delay_mean": p.payment_delay_mean,
-                        "payment_delay_std": p.payment_delay_std,
-                        "return_probability": p.return_probability,
-                        "growth_rate": p.growth_rate_monthly,
-                    }
-                }
-            })
-            
-        await bulk_insert(engine, "customers", customer_records)
-        status["records"]["customers"]["written"] = len(profiles)
-        status["phase_progress"] = 1.0
-        status["total_progress"] = 0.10
+        export_dir = os.path.join("exports", job_id)
+        export_all_modes(
+            data=sim_results,
+            output_dir=export_dir,
+            duplication_rate=options.get("duplication_rate", 0.05),
+            seed=run_seed
+        )
 
-        # Phase 3, 4, 5: Sales, Payments, Returns
-        logger.info("job_phase_transactions_start", job_id=job_id)
-        status["phase"] = "generation"
-        status["phase_progress"] = 0.0
-        
-        # Set up trackers and queues
-        invoice_tracker = GlobalInvoiceTracker()
-        payment_tracker = GlobalPaymentTracker()
-        return_tracker = GlobalReturnTracker()
-        
-        queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=10)
-        writer_task = asyncio.create_task(db_writer_worker(queue, engine, job_id))
-
-        total_profiles = len(profiles)
-        
-        chunk_size = 1000
-        for chunk_idx in range(0, total_profiles, chunk_size):
-            # Check if job failed from worker side
-            if status["status"] == "failed":
-                break
-
-            chunk_profiles = profiles[chunk_idx:chunk_idx + chunk_size]
-            
-            sales_chunk: list[dict[str, Any]] = []
-            payments_chunk: list[dict[str, Any]] = []
-            returns_chunk: list[dict[str, Any]] = []
-            
-            for profile in chunk_profiles:
-                # Deterministic RNG per customer based on their profile seed
-                rng = np.random.default_rng(profile.rng_seed)
-                
-                # 1. Sales
-                sales_records = []
-                if options.get("generate_sales", True):
-                    order_dates = generate_order_dates(profile, start_date, end_date, rng)
-                    sales_records = generate_sales_for_customer(profile, order_dates, invoice_tracker, rng)
-                    
-                # 2. Payments (modifies sales_records in place)
-                payment_records = []
-                if options.get("generate_payments", True) and sales_records:
-                    payment_records = generate_payments_for_customer(profile, sales_records, payment_tracker, end_date, rng)
-                    
-                # 3. Returns
-                return_records = []
-                if options.get("generate_returns", True) and sales_records:
-                    return_records = generate_returns_for_customer(profile, sales_records, return_tracker, end_date, rng)
-
-                # Accumulate generated counts
-                status["records"]["sales"]["generated"] += len(sales_records)
-                status["records"]["payments"]["generated"] += len(payment_records)
-                status["records"]["returns"]["generated"] += len(return_records)
-
-                sales_chunk.extend(sales_records)
-                payments_chunk.extend(payment_records)
-                returns_chunk.extend(return_records)
-                
-            # Flush sales for this chunk
-            if sales_chunk:
-                for i in range(0, len(sales_chunk), batch_size):
-                    await queue.put(("raw_sales", sales_chunk[i:i + batch_size]))
-                
-                # Wait for all sales of this chunk to be written
-                await queue.join()
-                
-            # Check if job failed during sales insert
-            if status["status"] == "failed":
-                break
-
-            # Flush payments for this chunk
-            if payments_chunk:
-                for i in range(0, len(payments_chunk), batch_size):
-                    await queue.put(("raw_payments", payments_chunk[i:i + batch_size]))
-                
-            # Flush returns for this chunk
-            if returns_chunk:
-                for i in range(0, len(returns_chunk), batch_size):
-                    await queue.put(("raw_returns", returns_chunk[i:i + batch_size]))
-                
-            # Wait for all payments and returns of this chunk to be written
-            await queue.join()
-
-            # Update progress
-            processed = min(chunk_idx + chunk_size, total_profiles)
-            status["phase_progress"] = processed / total_profiles
-            # Scale total progress from 0.10 to 0.90
-            status["total_progress"] = round(0.10 + 0.80 * (processed / total_profiles), 2)
-            status["elapsed_seconds"] = round(time.time() - status["start_time"], 1)
-
-        # Signal background worker to stop and wait for it
-        await queue.put(None)
-        await writer_task
-
-        # Verify that background worker didn't set job status to failed
-        if status["status"] == "failed":
-            return
-
-        # Phase 5: Post-Generation KPI Calibration
+        # Phase 4: Post-Generation KPI Calibration
         if options.get("validate_kpis", True):
             logger.info("job_phase_kpi_validation", job_id=job_id)
             status["phase"] = "validation"
-            status["phase_progress"] = 0.5
+            status["phase_progress"] = 0.90
             
             kpis = await compute_db_kpis(engine, start_date, end_date)
             calib = calibrate_kpis(
@@ -383,6 +239,10 @@ async def run_generation_job(
                 "details": calib["checks"],
             }
             
+            # Fail if validation check fails (V2 Validation Requirement)
+            if not calib["all_passed"]:
+                raise ValueError(f"KPI Calibration failed: {calib['checks']}")
+            
         status["status"] = "completed"
         status["phase"] = "complete"
         status["phase_progress"] = 1.0
@@ -399,3 +259,4 @@ async def run_generation_job(
             "details": str(e)
         }
         status["elapsed_seconds"] = round(time.time() - status["start_time"], 1)
+        raise

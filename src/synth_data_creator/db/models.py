@@ -21,6 +21,82 @@ class Base(DeclarativeBase):
     pass
 
 
+class Territory(Base):
+    __tablename__ = "territories"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid(),
+    )
+    state: Mapped[str] = mapped_column(String(100), nullable=False)
+    district: Mapped[str] = mapped_column(String(100), nullable=False)
+    city: Mapped[str] = mapped_column(String(100), nullable=False)
+    route: Mapped[str] = mapped_column(String(100), nullable=False)
+    market_cluster: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    # Relationships
+    customers: Mapped[list["Customer"]] = relationship("Customer", back_populates="territory")
+    salespersons: Mapped[list["Salesperson"]] = relationship("Salesperson", back_populates="territory")
+
+    __table_args__ = (
+        Index("idx_territories_state_city", "state", "city"),
+        Index("idx_territories_cluster", "market_cluster"),
+    )
+
+
+class Salesperson(Base):
+    __tablename__ = "salespersons"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid(),
+    )
+    name: Mapped[str] = mapped_column(String(150), nullable=False)
+    tenure_months: Mapped[int] = mapped_column(Integer, nullable=False, default=12)
+    effectiveness: Mapped[float] = mapped_column(Numeric(3, 2), nullable=False, default=1.0)  # e.g. 0.5 to 1.5
+    visit_frequency_days: Mapped[int] = mapped_column(Integer, nullable=False, default=7)
+    
+    territory_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("territories.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # Relationships
+    territory: Mapped[Territory | None] = relationship("Territory", back_populates="salespersons")
+    customers: Mapped[list["Customer"]] = relationship("Customer", back_populates="salesperson")
+
+    __table_args__ = (
+        Index("idx_salespersons_territory", "territory_id"),
+    )
+
+
+class Product(Base):
+    __tablename__ = "products"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid(),
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False, unique=True)
+    category: Mapped[str] = mapped_column(String(100), nullable=False)
+    brand: Mapped[str] = mapped_column(String(100), nullable=False)
+    base_price: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    unit: Mapped[str] = mapped_column(String(20), nullable=False, default="piece")
+    margin_profile: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)  # stores cost_price, tax_rate, etc.
+
+    __table_args__ = (
+        Index("idx_products_category", "category"),
+        Index("idx_products_brand", "brand"),
+    )
+
+
 class Customer(Base):
     __tablename__ = "customers"
 
@@ -50,6 +126,17 @@ class Customer(Base):
 
     behavioral_profile: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
+    territory_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("territories.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    salesperson_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("salespersons.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -68,6 +155,11 @@ class Customer(Base):
     sales: Mapped[list["SalesRecord"]] = relationship("SalesRecord", back_populates="customer")
     payments: Mapped[list["PaymentRecord"]] = relationship("PaymentRecord", back_populates="customer")
     returns: Mapped[list["ReturnRecord"]] = relationship("ReturnRecord", back_populates="customer")
+    
+    territory: Mapped[Territory | None] = relationship("Territory", back_populates="customers")
+    salesperson: Mapped[Salesperson | None] = relationship("Salesperson", back_populates="customers")
+    event_logs: Mapped[list["EventLog"]] = relationship("EventLog", back_populates="customer")
+    intelligence_benchmark: Mapped["IntelligenceBenchmark | None"] = relationship("IntelligenceBenchmark", back_populates="customer")
 
     __table_args__ = (
         Index("idx_customers_code", "customer_code"),
@@ -75,6 +167,8 @@ class Customer(Base):
         Index("idx_customers_city", "city"),
         Index("idx_customers_reg_date", "registration_date"),
         Index("idx_customers_profile", "behavioral_profile", postgresql_using="gin"),
+        Index("idx_customers_territory", "territory_id"),
+        Index("idx_customers_salesperson", "salesperson_id"),
     )
 
 
@@ -265,4 +359,89 @@ class ReturnRecord(Base):
         Index("idx_returns_date", "return_date"),
         Index("idx_returns_reason", "return_reason"),
         Index("idx_returns_status", "status"),
+    )
+
+
+class EventLog(Base):
+    __tablename__ = "event_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid(),
+    )
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    source_state: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # Relationships
+    customer: Mapped[Customer] = relationship("Customer", back_populates="event_logs")
+
+    __table_args__ = (
+        Index("idx_event_logs_type", "event_type"),
+        Index("idx_event_logs_customer", "customer_id"),
+        Index("idx_event_logs_timestamp", "timestamp"),
+    )
+
+
+class IntelligenceBenchmark(Base):
+    __tablename__ = "intelligence_benchmarks"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid(),
+    )
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    hidden_state: Mapped[str] = mapped_column(String(50), nullable=False)
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    expected_risk_band: Mapped[str] = mapped_column(String(20), nullable=False)
+    expected_health_band: Mapped[str] = mapped_column(String(20), nullable=False)
+    expected_growth_band: Mapped[str] = mapped_column(String(20), nullable=False)
+    expected_churn_probability: Mapped[float] = mapped_column(Numeric(5, 4), nullable=False)
+
+    # Relationships
+    customer: Mapped[Customer] = relationship("Customer", back_populates="intelligence_benchmark")
+
+    __table_args__ = (
+        Index("idx_benchmarks_customer", "customer_id"),
+    )
+
+
+class RelationshipGraph(Base):
+    __tablename__ = "relationships"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid(),
+    )
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    related_customer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    relationship_type: Mapped[str] = mapped_column(String(50), nullable=False)  # e.g. 'shared_ownership', 'competitor', 'distributor_cluster'
+
+    __table_args__ = (
+        Index("idx_relationships_cust", "customer_id"),
+        Index("idx_relationships_related", "related_customer_id"),
     )

@@ -7,13 +7,30 @@ from synth_data_creator.db.models import Base
 
 logger = structlog.get_logger()
 
-REQUIRED_TABLES = ["customers", "raw_sales", "raw_payments", "raw_returns"]
+REQUIRED_TABLES = [
+    "territories",
+    "salespersons",
+    "products",
+    "customers",
+    "raw_sales",
+    "raw_payments",
+    "raw_returns",
+    "event_logs",
+    "intelligence_benchmarks",
+    "relationships",
+]
 
 EXPECTED_COLUMNS = {
-    "customers": ["id", "customer_code", "business_name", "behavioral_profile"],
+    "territories": ["id", "state", "city", "route"],
+    "salespersons": ["id", "name", "effectiveness", "visit_frequency_days"],
+    "products": ["id", "name", "category", "base_price", "unit"],
+    "customers": ["id", "customer_code", "business_name", "behavioral_profile", "territory_id", "salesperson_id"],
     "raw_sales": ["id", "customer_id", "invoice_number", "invoice_amount"],
     "raw_payments": ["id", "customer_id", "invoice_id", "payment_amount"],
     "raw_returns": ["id", "customer_id", "sale_id", "return_value"],
+    "event_logs": ["id", "event_type", "customer_id", "timestamp", "metadata_json"],
+    "intelligence_benchmarks": ["id", "customer_id", "hidden_state", "snapshot_date", "expected_risk_band"],
+    "relationships": ["id", "customer_id", "related_customer_id", "relationship_type"],
 }
 
 async def initialize_schema(engine: AsyncEngine, drop_existing: bool = False) -> None:
